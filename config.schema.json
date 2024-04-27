@@ -1,16 +1,155 @@
 {
-  "pluginAlias": "ExampleHomebridgePlugin",
+  "__documentation": "https://developers.homebridge.io/#/config-schema",
+  "__documentation2": "https://github.com/jsonform/jsonform",
+  "pluginAlias": "AdGuardHome-Plus",
   "pluginType": "platform",
   "singular": true,
   "schema": {
-    "type": "object",
-    "properties": {
-      "name": {
-        "title": "Name",
-        "type": "string",
-        "required": true,
-        "default": "Example Dynamic Platform"
+    "name": {
+      "title": "Name",
+      "type": "string",
+      "required": true,
+      "default": "AdGuard Home+"
+    },
+    "host": {
+      "title": "IP Address / Hostname",
+      "type": "string",
+      "required": true,
+      "format": "hostname",
+      "default": "localhost",
+      "description": "AdGuard Home hostname, the default is localhost."
+    },
+    "https": {
+      "title": "Use HTTPS?",
+      "type": "boolean",
+      "default": false
+    },
+    "port": {
+      "title": "Port",
+      "type": "integer",
+      "required": false,
+      "default": 80,
+      "description": "AdGuard Home port, the default is 80."
+    },
+    "username": {
+      "title": "Username",
+      "type": "string",
+      "required": false,
+      "description": "AdGuard Home username."
+    },
+    "password": {
+      "title": "Password",
+      "type": "string",
+      "required": false,
+      "description": "AdGuard Home password."
+    },
+    "switches": {
+      "type": "array",
+      "items": {
+        "title": "Switches",
+        "type": "object",
+        "properties": {
+          "name": {
+            "title": "Switch Name",
+            "type": "string",
+            "required": true,
+            "default": "AdGuard Home",
+            "description": "A unique name for this switch."
+          },
+          "clients": {
+            "title": "Client/@Tag List",
+            "type": "string",
+            "description": "A comma-separated list of AdGuard clients or @tags this switch will apply to. (Leave empty to affect 'default' AGH settings.)",
+            "required": false
+          },
+          "services": {
+            "title": "Service List",
+            "type": "string",
+            "description": "A comma-separated list of service names AdGuard will block for the configured clients when turned on. (Leave empty to enable/disable _all_ blocking.)",
+            "required": false
+          },
+          "defaultState": {
+            "title": "Enabled By Default",
+            "type": "boolean",
+            "default": true,
+            "description": "The 'natural' state of the switch should be considered 'active' or 'on' meaning AdGuard Home is active. Timed switches will reset to this state when timers expire."
+          },
+          "homekitType": {
+            "title": "Homekit Switch Type",
+            "type": "string",
+            "default": "Switch",
+            "required": true,
+            "enum": [
+              "Switch",
+              "Lock",
+              "Television"
+            ],
+            "description": "The type of switch-like service that should be presented in HomeKit. 'Lock' has more states, and more scrutiny because it is a 'Security' accessory. 'Television' shows more informative state in a single tile so long as it is a single switch. (ie, Only 0-1 timers configured.)"
+          },
+          "bridged": {
+            "title": "Bridged",
+            "type": "boolean",
+            "default": true,
+            "description": "Create a bridged (vs unbridged) accessory. Bridged accessories setup easier, but unbridged accessories have better icon control. (Neither have 'Category' control.) Unbridged accessories with multiple timers do not get grouped."
+          },
+          "forceState": {
+            "title": "Force Changes",
+            "type": "boolean",
+            "default": false,
+            "description": "Force consistent blocking state in AdGuard Home, even if it's current status does not match the 'on' or 'off' state of this switch."
+          },
+          "autoResetTimes": {
+            "title": "Timers",
+            "type": "string",
+            "description": "A comma-separated list of timeouts in minutes to wait before restoring the default state of the switch. (Set to 0 for no timer; Use multiple timers to create multiple switches which are identical aside from the reset timer.)",
+            "required": false
+          }
+        }
       }
     }
-  }
+  },
+  "layout": [
+    {
+      "title": "AdGuard Settings",
+      "type": "fieldset",
+      "expandable": true,
+      "expanded": true,
+      "items":[
+        "host",
+        "port",
+        "https",
+        "username",
+        {
+          "key": "password",
+          "type": "password"
+        }
+      ]
+    },
+    {
+      "title": "Switches",
+      "type": "fieldset",
+      "expandable": true,
+      "expanded": true,
+      "items": [
+        {
+          "title": "{{ value.name || 'New Switch' }}",
+          "type": "tabarray",
+          "key": "switches",
+          "notitle": true,
+          "expandable": true,
+          "expanded": false,
+          "items": [
+            "switches[].name",
+            "switches[].homekitType",
+            "switches[].bridged",
+            "switches[].clients",
+            "switches[].services",
+            "switches[].autoResetTimes",
+            "switches[].defaultState",
+            "switches[].forceState"
+          ]
+        }
+      ]
+    }
+  ]
 }
