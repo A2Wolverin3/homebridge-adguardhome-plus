@@ -3,7 +3,7 @@
   "displayName": "AdGuard Home Plus",
   "name": "homebridge-adguardhome-plus",
   "version": "0.1.0",
-  "description": "A short description about what your plugin does.",
+  "description": "An enhanced Switch experience for controlling AdGuard Home.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
