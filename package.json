@@ -1,5 +1,4 @@
 {
-  "private": true,
   "displayName": "AdGuard Home Plus",
   "name": "homebridge-adguardhome-plus",
   "version": "0.1.0",
