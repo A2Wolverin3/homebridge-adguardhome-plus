@@ -274,14 +274,17 @@ export default class AdGuardHomeServiceGroup {
       const clientList = this.agh.expandTags(this.clients);
       let all = true;
       let none = true;
+      this.log.debug(`getStateFromAdGuardStatus: Checking client list: [${clientList.join(',')}]`);
       if (this.isSelectServices) {
         clientList.forEach((client) => {
           const clientStatus = status.clients.find((c) => c.name === client);
           if (clientStatus !== undefined) {
             const ccomp = this.containsAllOrNone(clientStatus.blocked_services, this.services);
+            this.log.debug(`    Client[${client}] service check: ${ccomp}`);
             all &&= (ccomp > 0);
             none &&= (ccomp < 0);
           } else {
+            this.log.debug(`    Client[${client}] service check: not found`);
             all = false;
           }
         });
@@ -294,9 +297,11 @@ export default class AdGuardHomeServiceGroup {
           const clientStatus = status.clients.find((c) => c.name === client);
           if (clientStatus !== undefined) {
             const blocking = this.agh.isBlockingEnabled(clientStatus);
+            this.log.debug(`    Client[${client}] blocking check: ${blocking}`);
             all &&= blocking;
             none &&= !blocking;
           } else {
+            this.log.debug(`    Client[${client}] blocking check: not found`);
             all = false;
           }
         });

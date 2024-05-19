@@ -245,6 +245,12 @@ export default class AdGuardHomeServer {
             newClientList.push(exp.name);
           }
         });
+      } else if (c.includes('*')) {
+        this.latest.clients.filter((cstat) => this.wildcardMatch(c, cstat.name)).forEach((exp) => {
+          if (!newClientList.includes(exp.name)) {
+            newClientList.push(exp.name);
+          }
+        });
       } else {
         if (!newClientList.includes(c)) {
           newClientList.push(c);
@@ -340,5 +346,11 @@ export default class AdGuardHomeServer {
       }
     });
     return newList;
+  }
+
+  private wildcardMatch(wildcard: string, str: string, caseSensitive = true) {
+    const w = wildcard.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`^${w.replace(/\*/g, '.*').replace(/\?/g, '.')}$`, caseSensitive ? '' : 'i');
+    return re.test(str);
   }
 }
