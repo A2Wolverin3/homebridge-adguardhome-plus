@@ -59,7 +59,7 @@
           "clients": {
             "title": "Client/@Tag List",
             "type": "string",
-            "description": "A comma-separated list of AdGuard clients or @tags this switch will apply to. (Leave empty to affect 'default' AGH settings.)",
+            "description": "A comma-separated list of AdGuard clients or @tags this switch will apply to. (Leave empty to affect 'global' AGH settings.)",
             "required": false
           },
           "services": {
@@ -69,10 +69,10 @@
             "required": false
           },
           "defaultState": {
-            "title": "Enabled By Default",
+            "title": "Default State",
             "type": "boolean",
             "default": true,
-            "description": "The 'natural' state of the switch should be considered 'active' or 'on' meaning AdGuard Home is active. Timed switches will reset to this state when timers expire."
+            "description": "Blocking enabled (true) or blocking disabled (false). Timed switches will reset to this state when timers expire."
           },
           "homekitType": {
             "title": "Homekit Switch Type",
@@ -96,7 +96,7 @@
             "title": "Force Changes",
             "type": "boolean",
             "default": false,
-            "description": "Force consistent blocking state in AdGuard Home, even if it's current status does not match the 'on' or 'off' state of this switch."
+            "description": "Force consistent blocking state in AdGuard Home, even if it's current status does not exactly match the 'on' or 'off' conditions of this switch."
           },
           "autoResetTimes": {
             "title": "Timers",

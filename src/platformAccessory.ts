@@ -1,6 +1,6 @@
 import { Service, PlatformAccessory, CharacteristicValue, Logger } from 'homebridge';
 import { AdGuardHomePlus } from './platform';
-import AGH, { AdGuardStatus as AGHStatus } from './adguardhome';
+import AGH, { AdGuardStatus as AGHStatus, AdGuardClientConfig } from './adguardhome';
 import ServiceManager, { ServiceType } from './serviceManager';
 import fs_sync, {promises as fs} from 'fs';
 
@@ -61,6 +61,7 @@ export default class AdGuardHomeServiceGroup {
   private readonly forceState: boolean;
   private readonly storageRoot: string;
   private readonly timerFile: string;
+  private readonly clientStorageRoot: string;
   private readonly isBridged: boolean;
   private readonly clients: string[];
   private readonly services: string[];
@@ -69,6 +70,7 @@ export default class AdGuardHomeServiceGroup {
   private readonly serviceManager: ServiceManager;
   private readonly log: Logger;
 
+  private _currentStatus: AGHStatus;
   private _currentState: AdGuardHomeState;
   private _targetState: AdGuardHomeState;
   private _currentTimer: NodeJS.Timeout | undefined;
@@ -81,11 +83,12 @@ export default class AdGuardHomeServiceGroup {
   ) {
     const config = accessory.context.config;
     this.groupName = config['name'];
-    this.defaultState = config['defaultState'] !== false; // true, unless explicitly false
+    this.defaultState = !(config['defaultState'] === false); // true, unless explicitly false
     this.forceState = (config['forceState'] === true);
     this.serviceType = config['homekitType'] || ServiceType.Switch;
     this.storageRoot = this.platform.api.user.storagePath() + '/agh_plus/' + this.groupName.replace(/([^a-zA-Z0-9]+)/g, '_');
     this.timerFile = `${this.storageRoot}/timer`;
+    this.clientStorageRoot = this.platform.api.user.storagePath() + '/agh_plus/clients';  // Share client 'on' state across entire platform
     this.isBridged = !(config['bridged'] === false);
     this.log = platform.log;
 
@@ -104,6 +107,7 @@ export default class AdGuardHomeServiceGroup {
     this.services = (config['services'] === undefined) ? [] : config['services'].split(',').map((s) => s.trim());
 
     // Parse initial state
+    this._currentStatus = this.initialStatus;
     this._targetState = this.toAGHState(this.defaultState);
     this._currentState = AdGuardHomeState.UNAVAILABLE;
     const initState = this.currentState = this.getStateFromAdGuardStatus(this.initialStatus);
@@ -111,6 +115,7 @@ export default class AdGuardHomeServiceGroup {
     // Ensure the state directory exists
     try {
       fs_sync.mkdirSync(this.storageRoot, { recursive: true });
+      fs_sync.mkdirSync(this.clientStorageRoot, { recursive: true });
     } catch (err) {
       this.log.warn(`Error creating state directory for '${this.groupName}'!`, err);
     }
@@ -175,6 +180,7 @@ export default class AdGuardHomeServiceGroup {
   }
 
   public update(currentStatus: AGHStatus) {
+    this._currentStatus = currentStatus;
     const newState = this.getStateFromAdGuardStatus(currentStatus);
     if (newState !== this.currentState) {
       this.updateHomeKit(newState, newState);
@@ -226,7 +232,11 @@ export default class AdGuardHomeServiceGroup {
       if (this.isSelectServices) {
         successful = await this.agh.postClientServices(agState, this.clients, this.services);
       } else {
-        successful = await this.agh.postClients(agState, this.clients);
+        // Clients requires special handling. If turning blocking off, we need to store the options/services that
+        // are currently specified for each client so we can restore the same state when re-enabling blocking.
+        successful = await this.agh.postClients(agState, this.clients,
+          /* readClientDataAsync: */ (cname) => this.readClientState(cname),
+          /* writeClientDataAsync: */ (cname, data) => this.writeClientState(cname, data));
       }
     }
 
@@ -262,9 +272,9 @@ export default class AdGuardHomeServiceGroup {
       }
     } else {
       const clientList = this.agh.expandTags(this.clients);
+      let all = true;
+      let none = true;
       if (this.isSelectServices) {
-        let all = true;
-        let none = true;
         clientList.forEach((client) => {
           const clientStatus = status.clients.find((c) => c.name === client);
           if (clientStatus !== undefined) {
@@ -275,10 +285,23 @@ export default class AdGuardHomeServiceGroup {
             all = false;
           }
         });
-        cmp = (all ? 1 : (none ? -1 : 0));
       } else {
-        cmp = this.containsAllOrNone(status.blocked_clients, clientList);
+        // Clients with no service list: any of 1) filtering enabled, 2) safe search enabled, or 3) services blocked
+        // means blocking is enabled. All three need to be turned off to qualify as disabled. Like the 'global' switch
+        // without services, there is no 'inconsistent' state for any one client. However, multiple clients can be on
+        // or off, which would be inconsistent as a group - so use the same boolean accumulation used with client services.
+        clientList.forEach((client) => {
+          const clientStatus = status.clients.find((c) => c.name === client);
+          if (clientStatus !== undefined) {
+            const blocking = this.agh.isBlockingEnabled(clientStatus);
+            all &&= blocking;
+            none &&= !blocking;
+          } else {
+            all = false;
+          }
+        });
       }
+      cmp = (all ? 1 : (none ? -1 : 0));
     }
 
     if (cmp < 0) {
@@ -332,7 +355,35 @@ export default class AdGuardHomeServiceGroup {
   private async writeTimerStorage(timer: number): Promise<void> {
     return fs.writeFile(this.timerFile, timer.toString(), 'utf8')
       .catch((err) => {
-        this.log.info('Failed to write timer file:', err);
+        this.log.warn('Failed to write timer file:', err);
+      });
+  }
+
+  private async readClientState(name: string, clearStorage = true): Promise<AdGuardClientConfig> {
+    if (!name) {  // name is null/empty/undefined
+      return null;
+    }
+
+    this.log.debug(`Reading saved client[${name}] state...`);
+    return fs.readFile(`${this.clientStorageRoot}/${name}`, 'utf8')
+      .then((s) => JSON.parse(s))
+      .then((state) => {
+        if (clearStorage) {
+          fs.unlink(`${this.clientStorageRoot}/${name}`);
+        }
+        return state;
+      })
+      .catch((err) => {
+        this.log.warn(`Failed while reading saved client[${name}] state:`, err);
+        return null;
+      });
+  }
+
+  private async writeClientState(name: string, data: AdGuardClientConfig): Promise<void> {
+    this.log.debug(`Saving client[${name}] state...`);
+    return fs.writeFile(`${this.clientStorageRoot}/${name}`, JSON.stringify(data), 'utf8')
+      .catch((err) => {
+        this.log.warn(`Failed while writing saved client[${name}] state:`, err);
       });
   }
 
