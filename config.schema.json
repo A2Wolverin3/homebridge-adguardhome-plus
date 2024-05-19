@@ -69,7 +69,7 @@
             "required": false
           },
           "defaultState": {
-            "title": "Default State",
+            "title": "Timer Default State",
             "type": "boolean",
             "default": true,
             "description": "Blocking enabled (true) or blocking disabled (false). Timed switches will reset to this state when timers expire."
@@ -106,6 +106,18 @@
           }
         }
       }
+    },
+    "interval": {
+      "title": "Status Query Interval (in ms)",
+      "type": "integer"
+    },
+    "useCache": {
+      "title": "Use cached accessories when starting",
+      "type": "boolean"
+    },
+    "clearUnusedCache": {
+      "title": "Clear unused accessories from the accessory cache when starting",
+      "type": "boolean"
     }
   },
   "layout": [
