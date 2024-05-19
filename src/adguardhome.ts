@@ -1,14 +1,14 @@
 import got, { /* CancelableRequest, */ Response, Got } from 'got';
 import { Logger } from 'homebridge';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AdGuardClientConfig = any;
 export class AdGuardStatus {
   public isAvailable: boolean | undefined;
   public error;
   public enabled: boolean | undefined;
   public blocked_services: string[] = [];
-  public blocked_clients: string[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public clients: any[] = [];
+  public clients: AdGuardClientConfig[] = [];
 }
 
 export default class AdGuardHomeServer {
@@ -48,13 +48,13 @@ export default class AdGuardHomeServer {
     this.log.debug(`AdGuard Http client created: [${prefixUrl}]`);
   }
 
-  public async getCurrentStatus(getStatus: boolean, getDefaultServices: boolean, getDisallowedClients: boolean, getClientServices: boolean)
+  public async getCurrentStatus(getStatus: boolean, getDefaultServices: boolean, getClientServices: boolean)
     : Promise<AdGuardStatus> {
     const currentStatus = new AdGuardStatus;
     currentStatus.isAvailable = true;
 
     // eslint-disable-next-line max-len
-    this.log.debug(`AGH: Querying AGHome server for current status: [${getStatus}, ${getDefaultServices}, ${getDisallowedClients}, ${getClientServices}]...`);
+    this.log.debug(`AGH: Querying AGHome server for current status: [${getStatus}, ${getDefaultServices}, ${getClientServices}]...`);
     let abortPromise = false;
     await Promise.all([
       getStatus ? this.aghApi('status')
@@ -73,16 +73,6 @@ export default class AdGuardHomeServer {
         .then((body: any) => {
           if (!abortPromise) {
             this.latest.blocked_services = currentStatus.blocked_services = body.ids;
-          }
-        })
-        : Promise.resolve(),
-
-      getDisallowedClients ? this.aghApi('access/list')
-        .json()
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .then((body: any) => {
-          if (!abortPromise) {
-            this.latest.blocked_clients = currentStatus.blocked_clients = body.disallowed_clients;
           }
         })
         : Promise.resolve(),
@@ -135,18 +125,37 @@ export default class AdGuardHomeServer {
     );
   }
 
-  public async postClients(enabled: boolean, clients: string[]): Promise<boolean> {
+  public async postClients(enabled: boolean, clients: string[],
+    readClientDataAsync: (key: string) => Promise<AdGuardClientConfig>,
+    writeClientDataAsync: (key: string, data: AdGuardClientConfig) => Promise<void>) {
     this.log.info(`AGH: Setting Client status to: ${enabled} - [${clients.join(',')}]`);
 
     const clientList = this.expandTags(clients);
-    const newClientList = enabled ? this.merge(this.latest.blocked_clients, clientList)
-      : this.remove(this.latest.blocked_clients, clientList);
-    return this.doPostWrapper(
-      this.aghApi.post('access/set', {
-        json: { disallowed_clients: newClientList },
-        headers: { 'X-homebridge-aghp-info': `client - ${enabled} [${clients.join(',')}]` },
-      }),
-    );
+    const postList = clientList.map((cname) => this.latest.clients.find((c) => c.name === cname))
+      .filter((cc) => !!cc)
+      .map(async (clientConfig) => {
+        let newClientConfig: AdGuardClientConfig;
+        if (enabled) {
+          // If re-enabling blocking, try to restore previous config. Fall back on 'enabling'
+          // as best as we can with current config.
+          newClientConfig = (await readClientDataAsync(clientConfig.name))
+            ?? this.setBlockingConfig(clientConfig, true);
+        } else {
+          // If disabling blocking, save the current config and turn off everything.
+          if (this.isBlockingEnabled(clientConfig)) { // Only save the config if it actually turns on blocking.
+            await writeClientDataAsync(clientConfig.name, clientConfig);
+          }
+          newClientConfig = this.setBlockingConfig(clientConfig, false);
+        }
+        const newConfigPayload = { name: clientConfig.name, data: newClientConfig };
+        this.log.debug(`AGH: creating a promise to post to 'clients/update' for client ${clientConfig.name}`);
+        return this.aghApi.post('clients/update', {
+          json: newConfigPayload,
+          headers: { 'X-homebridge-aghp-info': `clients - ${enabled} [${clientConfig.name}]` },
+        });
+      });
+
+    return this.doPostWrapper(Promise.allSettled(postList));
   }
 
   public async postClientServices(enabled: boolean, clients: string[], services: string[]): Promise<boolean> {
@@ -168,8 +177,7 @@ export default class AdGuardHomeServer {
           json: newConfig,
           headers: { 'X-homebridge-aghp-info': `client-services - ${enabled} [${clientConfig.name}]` },
         });
-      },
-      );
+      });
 
     return this.doPostWrapper(Promise.allSettled(postList));
   }
@@ -233,14 +241,79 @@ export default class AdGuardHomeServer {
     clientList.forEach((c) => {
       if (c.startsWith('@')) {
         this.latest.clients.filter((cstat) => cstat.tags.includes(c.substring(1))).forEach((exp) => {
-          newClientList.push(exp.name);
+          if (!newClientList.includes(exp.name)) {
+            newClientList.push(exp.name);
+          }
         });
       } else {
-        newClientList.push(c);
+        if (!newClientList.includes(c)) {
+          newClientList.push(c);
+        }
       }
     });
 
     return newClientList;
+  }
+
+  public isBlockingEnabled(clientStatus: AdGuardClientConfig, ignoreServices = false): boolean {
+    // Shortcut if there is not status record
+    if (!clientStatus) {
+      return false;
+    }
+
+    // Clients are considered to have ad blocking enabled if any of these are enabled:
+    //  1) filtering
+    //  2) safe search
+    //  3) parental filter
+    //  4) safebrowsing filter
+    //  5) any services blocked
+    // All these need to be turned off to qualify as disabled.
+    let isBlocking: boolean = (clientStatus.use_global_settings === true);
+    isBlocking ||= !ignoreServices && (clientStatus?.use_global_blocked_services === true);
+    isBlocking ||= !ignoreServices && (clientStatus?.blocked_services?.length > 0);
+    isBlocking ||= (clientStatus.filtering_enabled === true);
+    isBlocking ||= (clientStatus.parental_enabled === true);
+    isBlocking ||= (clientStatus.safebrowsing_enabled === true);
+    isBlocking ||= (clientStatus.safesearch_enabled === true);
+    isBlocking ||= (clientStatus?.safe_search?.enabled === true);
+    return isBlocking;
+  }
+
+  private setBlockingConfig(clientConfig: AdGuardClientConfig, blocking: boolean): AdGuardClientConfig {
+    const newCfg: AdGuardClientConfig = JSON.parse(JSON.stringify(clientConfig));
+
+    // The assumption here is that 'clientConfig' is boilerplate. If it was a previously saved
+    // specific state, then we wouldn't be here trying to enable/disable it.
+    if (blocking) {
+      // Default to using global settings, unless we detect that 'clientConfig' already has
+      // some block settings enabled.
+      if (!this.isBlockingEnabled(clientConfig)) {
+        this.log.info(`Turn on blocking for '${clientConfig.name}':`
+          + 'No saved config & not already enabled - use global settings.');
+        newCfg.use_global_settings = true;
+        newCfg.use_global_blocked_services = true;
+      } else {
+        this.log.info(`Turn on blocking for '${clientConfig.name}':`
+          + 'No saved config but already enabled - decide on global settings.');
+        newCfg.use_global_settings = clientConfig.use_global_settings || !this.isBlockingEnabled(clientConfig, true);
+        newCfg.use_global_blocked_services = (clientConfig?.blocked_services?.length > 0);
+      }
+    } else {
+      // Unblocking - 'unset' everything.
+      this.log.info(`Turn of blocking for '${clientConfig.name}'.`);
+      newCfg.use_global_settings = false;
+      newCfg.filtering_enabled = false;
+      newCfg.parental_enabled = false;
+      newCfg.safebrowsing_enabled = false;
+      newCfg.safesearch_enabled = false;
+      if (newCfg.safe_search) {
+        newCfg.safe_search.enabled = false;
+      }
+      newCfg.use_global_blocked_services = false;
+      newCfg.blocked_services = [];
+    }
+
+    return newCfg;
   }
 
   private merge(list1: string[], list2: string[], sort = false): string[] {

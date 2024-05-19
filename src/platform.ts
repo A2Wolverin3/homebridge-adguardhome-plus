@@ -65,7 +65,7 @@ export class AdGuardHomePlus implements DynamicPlatformPlugin {
     this.api.on('didFinishLaunching', async () => {
       log.debug('Executing didFinishLaunching callback');
       // Get initial AGH status
-      const initialStatus: AdGuardStatus = await this.agh.getCurrentStatus(true, true, true, true);
+      const initialStatus: AdGuardStatus = await this.agh.getCurrentStatus(true, true, true);
       // run the method to discover / register your devices as accessories
       this.discoverDevices(initialStatus!);
       // keep switch state in sync with the current AdGuardHome status
@@ -174,19 +174,18 @@ export class AdGuardHomePlus implements DynamicPlatformPlugin {
     this.log.info(`Starting AdGuard Home+ monitoring loop with interval ${this.interval}...`);
 
     setInterval(async () => {
-      let [getStatus, getDefSvcs, getDisabledClients, getClntSvcs]: boolean[] = [false, false, false, false];
+      let [getStatus, getDefSvcs, getClients]: boolean[] = [false, false, false];
       this.switchGroups.forEach((ags) => {
         if (ags.isGlobal) {
           getStatus ||= !ags.isSelectServices;
           getDefSvcs ||= ags.isSelectServices;
         } else {
-          getClntSvcs = true; // Needed in both client cases for @tag expansion.
-          getDisabledClients ||= !ags.isSelectServices;
+          getClients = true; // Needed in both client cases for @tag expansion.
         }
       });
 
-      this.log.debug(`Checking AGH status [${getStatus}, ${getDefSvcs}, ${getDisabledClients}, ${getClntSvcs}]...`);
-      const currentStatus: AdGuardStatus = await this.agh.getCurrentStatus(getStatus, getDefSvcs, getDisabledClients, getClntSvcs);
+      this.log.debug(`Checking AGH status [${getStatus}, ${getDefSvcs}, ${getClients}]...`);
+      const currentStatus: AdGuardStatus = await this.agh.getCurrentStatus(getStatus, getDefSvcs, getClients);
 
       if (currentStatus.isAvailable === true && this.lastStatus.isAvailable !== true) {
         this.log.info('AdGuardHome Server is now responsive.');
